@@ -1,0 +1,15 @@
+# Agent configuration
+.agent/
+
+# Compiled binaries
+squeak-the-cloud/squeak-audit
+squeak-audit
+
+# Results directory (keeps results folder but ignores generated json)
+squeak-the-cloud/results/*.json
+
+# Dependency management and IDEs
+.idea/
+.vscode/
+*.o
+*.out
