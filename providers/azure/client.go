@@ -2,11 +2,14 @@ package azure
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v2"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armsubscriptions"
@@ -24,7 +27,7 @@ type RoleDefinitionAuditResult struct {
 	NotDataActions           []string `json:"not_data_actions"`
 	HasFullAdmin             bool     `json:"has_full_admin"`
 	WildcardActions          []string `json:"wildcard_actions"`
-	NonAuditablePermissions []string `json:"non_auditable_permissions"`
+	NonAuditablePermissions  []string `json:"non_auditable_permissions"`
 	PrivilegeEscalationPaths []string `json:"privilege_escalation_paths"`
 }
 
@@ -69,6 +72,48 @@ func Run() {
 		subscriptionID = "00000000-0000-0000-0000-000000000000"
 	}
 
+	if output.IsVerbose() {
+		output.LogVerbose(fmt.Sprintf("Auditing Azure Subscription ID: %s", subscriptionID))
+		token, err := cred.GetToken(ctx, policy.TokenRequestOptions{
+			Scopes: []string{"https://management.azure.com/.default"},
+		})
+		if err == nil && token.Token != "" {
+			parts := strings.Split(token.Token, ".")
+			if len(parts) > 1 {
+				payload, decodeErr := base64.RawURLEncoding.DecodeString(parts[1])
+				if decodeErr == nil {
+					var claims map[string]interface{}
+					if json.Unmarshal(payload, &claims) == nil {
+						identityInfo := ""
+						if upn, ok := claims["upn"].(string); ok {
+							identityInfo = upn
+						} else if uniqueName, ok := claims["unique_name"].(string); ok {
+							identityInfo = uniqueName
+						} else if appid, ok := claims["appid"].(string); ok {
+							identityInfo = fmt.Sprintf("AppID: %s", appid)
+						}
+
+						name := ""
+						if n, ok := claims["name"].(string); ok {
+							name = n
+						}
+
+						oid := ""
+						if o, ok := claims["oid"].(string); ok {
+							oid = o
+						}
+
+						if identityInfo != "" {
+							output.LogVerbose(fmt.Sprintf("Current Azure Identity: %s %s (Object ID: %s)", identityInfo, name, oid))
+						} else {
+							output.LogVerbose(fmt.Sprintf("Current Azure Identity Object ID: %s", oid))
+						}
+					}
+				}
+			}
+		}
+	}
+
 	scope := fmt.Sprintf("/subscriptions/%s", subscriptionID)
 
 	clientFactory, err := armauthorization.NewClientFactory(subscriptionID, cred, nil)
@@ -93,7 +138,7 @@ func Run() {
 		"microsoft.compute/virtualmachines/runcommand/action":            "Virtual Machine RunCommand (Allows running root scripts on virtual instances)",
 		"microsoft.compute/virtualmachines/write":                        "Modify VM (Allows attaching managed identity with higher privileges)",
 		"microsoft.resources/deployments/write":                          "Template Deployments (Allows provisioning and executing privileged resource templates)",
-		"microsoft.automation/automationaccounts/runbooks/write":          "Automation Runbooks (Allows executing arbitrary administration code)",
+		"microsoft.automation/automationaccounts/runbooks/write":         "Automation Runbooks (Allows executing arbitrary administration code)",
 		"microsoft.managedidentity/userassignedidentities/assign/action": "Assign Managed Identity (Allows attaching identities to virtual resources)",
 	}
 
@@ -125,6 +170,9 @@ func Run() {
 				if roleDef.ID != nil {
 					roleDefIDToName[strings.ToLower(*roleDef.ID)] = roleName
 				}
+				if output.IsVerbose() {
+					output.LogVerbose(fmt.Sprintf("Resolvendo Role Definition ID '%s' -> '%s'", roleID, roleName))
+				}
 			}
 
 			roleType := ""
@@ -148,7 +196,7 @@ func Run() {
 				NotDataActions:           []string{},
 				HasFullAdmin:             false,
 				WildcardActions:          []string{},
-				NonAuditablePermissions: []string{},
+				NonAuditablePermissions:  []string{},
 				PrivilegeEscalationPaths: []string{},
 			}
 
@@ -281,6 +329,10 @@ func Run() {
 				RoleName:         resolvedName,
 				PrincipalID:      principalID,
 				PrincipalType:    principalType,
+			}
+
+			if output.IsVerbose() {
+				output.LogVerbose(fmt.Sprintf("Mapeando atribuição: %s '%s' -> Escopo: %s", principalType, principalID, assignmentScope))
 			}
 
 			assignIndex++

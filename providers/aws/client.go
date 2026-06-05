@@ -18,11 +18,11 @@ import (
 )
 
 type PolicyAnalysis struct {
-	PolicyType             string   `json:"policy_type"` // "inline" or "attached"
-	Name                   string   `json:"name"`
-	HasFullAdmin           bool     `json:"has_full_admin"` // Allow Action * on Resource *
-	WildcardActions        []string `json:"wildcard_actions"`
-	WildcardResources      []string `json:"wildcard_resources"`
+	PolicyType               string   `json:"policy_type"` // "inline" or "attached"
+	Name                     string   `json:"name"`
+	HasFullAdmin             bool     `json:"has_full_admin"` // Allow Action * on Resource *
+	WildcardActions          []string `json:"wildcard_actions"`
+	WildcardResources        []string `json:"wildcard_resources"`
 	PrivilegeEscalationPaths []string `json:"privilege_escalation_paths"`
 }
 
@@ -45,36 +45,36 @@ type IdentityProviderAuditResult struct {
 }
 
 type UserAuditResult struct {
-	UserName             string            `json:"user_name"`
-	UserArn              string            `json:"user_arn"`
-	MfaEnabled           bool              `json:"mfa_enabled"`
-	KeysCount            int               `json:"keys_count"`
-	HasOldKeys           bool              `json:"has_old_keys"` // keys > 90 days
-	KeysDetails          []string          `json:"keys_details"`
-	PasswordLastUsed     string            `json:"password_last_used,omitempty"`
-	NonAuditableDetails  []string          `json:"non_auditable_details"`
-	Tags                 map[string]string `json:"tags"`
+	UserName            string            `json:"user_name"`
+	UserArn             string            `json:"user_arn"`
+	MfaEnabled          bool              `json:"mfa_enabled"`
+	KeysCount           int               `json:"keys_count"`
+	HasOldKeys          bool              `json:"has_old_keys"` // keys > 90 days
+	KeysDetails         []string          `json:"keys_details"`
+	PasswordLastUsed    string            `json:"password_last_used,omitempty"`
+	NonAuditableDetails []string          `json:"non_auditable_details"`
+	Tags                map[string]string `json:"tags"`
 }
 
 type AccountSecurityAuditResult struct {
-	RootMfaEnabled              bool     `json:"root_mfa_enabled"`
-	RootAccessKeysPresent       bool     `json:"root_access_keys_present"`
-	PasswordPolicyExists        bool     `json:"password_policy_exists"`
-	PasswordMinLength           int32    `json:"password_min_length,omitempty"`
-	PasswordRequireUppercase    bool     `json:"password_require_uppercase"`
-	PasswordRequireLowercase    bool     `json:"password_require_lowercase"`
-	PasswordRequireNumbers      bool     `json:"password_require_numbers"`
-	PasswordRequireSymbols      bool     `json:"password_require_symbols"`
-	PasswordExpireDays          int32    `json:"password_expire_days,omitempty"`
-	NonAuditableDetails         []string `json:"non_auditable_details"`
+	RootMfaEnabled           bool     `json:"root_mfa_enabled"`
+	RootAccessKeysPresent    bool     `json:"root_access_keys_present"`
+	PasswordPolicyExists     bool     `json:"password_policy_exists"`
+	PasswordMinLength        int32    `json:"password_min_length,omitempty"`
+	PasswordRequireUppercase bool     `json:"password_require_uppercase"`
+	PasswordRequireLowercase bool     `json:"password_require_lowercase"`
+	PasswordRequireNumbers   bool     `json:"password_require_numbers"`
+	PasswordRequireSymbols   bool     `json:"password_require_symbols"`
+	PasswordExpireDays       int32    `json:"password_expire_days,omitempty"`
+	NonAuditableDetails      []string `json:"non_auditable_details"`
 }
 
 type TrailAudit struct {
-	Name                string `json:"name"`
-	HomeRegion          string `json:"home_region"`
-	IsMultiRegionTrail  bool   `json:"is_multi_region_trail"`
-	IsLogging           bool   `json:"is_logging"`
-	LatestDeliveryTime  string `json:"latest_delivery_time,omitempty"`
+	Name               string `json:"name"`
+	HomeRegion         string `json:"home_region"`
+	IsMultiRegionTrail bool   `json:"is_multi_region_trail"`
+	IsLogging          bool   `json:"is_logging"`
+	LatestDeliveryTime string `json:"latest_delivery_time,omitempty"`
 }
 
 type LoggingAuditResult struct {
@@ -100,6 +100,9 @@ func Run() {
 		output.LogWarning(fmt.Sprintf("could not discover dynamic AWS account context via STS: %v", err))
 	} else {
 		output.LogSuccess(fmt.Sprintf("Auditing AWS Account ID: %s", aws.ToString(callerIdentity.Account)))
+		if output.IsVerbose() {
+			output.LogVerbose(fmt.Sprintf("Current AWS Identity ARN: %s (User ID: %s)", aws.ToString(callerIdentity.Arn), aws.ToString(callerIdentity.UserId)))
+		}
 	}
 
 	iamClient := iam.NewFromConfig(cfg)
@@ -452,6 +455,10 @@ func Run() {
 				IsLogging:          isLogging,
 				LatestDeliveryTime: latestDelivery,
 			})
+
+			if output.IsVerbose() {
+				output.LogVerbose(fmt.Sprintf("CloudTrail trail found: %s | Home Region: %s | Multi-Region: %t | Logging: %t", aws.ToString(t.Name), aws.ToString(t.HomeRegion), aws.ToBool(t.IsMultiRegionTrail), isLogging))
+			}
 		}
 	} else {
 		ctResult.NonAuditableDetails = append(ctResult.NonAuditableDetails, fmt.Sprintf("describe_trails_failed: %v", err))
@@ -494,20 +501,20 @@ func analyzePolicyDocument(name string, policyType string, rawDoc string) Policy
 
 	// Critical privilege escalation APIs to match
 	escalationAPIs := map[string]string{
-		"iam:createaccesskey":        "CreateAccessKey (create a key for another user to compromise them)",
-		"iam:createloginprofile":     "CreateLoginProfile (set a password for a console user)",
-		"iam:updateloginprofile":     "UpdateLoginProfile (change a password for a console user)",
-		"iam:attachuserpolicy":       "AttachUserPolicy (attach admin policy to user)",
-		"iam:attachrolepolicy":       "AttachRolePolicy (attach admin policy to role)",
-		"iam:attachgrouppolicy":      "AttachGroupPolicy (attach admin policy to group)",
-		"iam:putuserpolicy":          "PutUserPolicy (write admin inline policy to user)",
-		"iam:putrolepolicy":          "PutRolePolicy (write admin inline policy to role)",
-		"iam:putgrouppolicy":         "PutGroupPolicy (write admin inline policy to group)",
-		"iam:addusertogroup":         "AddUserToGroup (add oneself to an admin group)",
-		"iam:passrole":               "PassRole (pass privilege role to a service to launch admin tasks)",
-		"lambda:createfunction":      "CreateFunction (create a lambda with high-privilege role)",
-		"lambda:updatefunctioncode":  "UpdateFunctionCode (inject backdoor code into high-privilege lambda)",
-		"iam:createpolicyversion":    "CreatePolicyVersion (modify policy defaults to gain admin access)",
+		"iam:createaccesskey":       "CreateAccessKey (create a key for another user to compromise them)",
+		"iam:createloginprofile":    "CreateLoginProfile (set a password for a console user)",
+		"iam:updateloginprofile":    "UpdateLoginProfile (change a password for a console user)",
+		"iam:attachuserpolicy":      "AttachUserPolicy (attach admin policy to user)",
+		"iam:attachrolepolicy":      "AttachRolePolicy (attach admin policy to role)",
+		"iam:attachgrouppolicy":     "AttachGroupPolicy (attach admin policy to group)",
+		"iam:putuserpolicy":         "PutUserPolicy (write admin inline policy to user)",
+		"iam:putrolepolicy":         "PutRolePolicy (write admin inline policy to role)",
+		"iam:putgrouppolicy":        "PutGroupPolicy (write admin inline policy to group)",
+		"iam:addusertogroup":        "AddUserToGroup (add oneself to an admin group)",
+		"iam:passrole":              "PassRole (pass privilege role to a service to launch admin tasks)",
+		"lambda:createfunction":     "CreateFunction (create a lambda with high-privilege role)",
+		"lambda:updatefunctioncode": "UpdateFunctionCode (inject backdoor code into high-privilege lambda)",
+		"iam:createpolicyversion":   "CreatePolicyVersion (modify policy defaults to gain admin access)",
 	}
 
 	for _, stmtRaw := range statements {

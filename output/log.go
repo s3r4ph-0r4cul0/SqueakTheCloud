@@ -26,3 +26,19 @@ func LogWarning(msg string) {
 func LogCritical(msg string) {
 	fmt.Printf("%s[CRITICAL] %s%s\n", Red, msg, Reset)
 }
+
+var verboseEnabled bool
+
+func SetVerbose(enabled bool) {
+	verboseEnabled = enabled
+}
+
+func IsVerbose() bool {
+	return verboseEnabled
+}
+
+func LogVerbose(msg string) {
+	if verboseEnabled {
+		fmt.Printf("%s[VERBOSE] %s%s\n", Blue, msg, Reset)
+	}
+}

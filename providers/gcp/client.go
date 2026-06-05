@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/squeak-the-cloud/squeak/output"
+	"golang.org/x/oauth2/google"
 	"google.golang.org/api/iam/v1"
 )
 
@@ -25,13 +27,13 @@ type GcpRoleAuditResult struct {
 }
 
 type GcpKey struct {
-	KeyID        string `json:"key_id"`
-	KeyType      string `json:"key_type"`
-	ValidBefore  string `json:"valid_before"`
-	ValidAfter   string `json:"valid_after"`
+	KeyID         string `json:"key_id"`
+	KeyType       string `json:"key_type"`
+	ValidBefore   string `json:"valid_before"`
+	ValidAfter    string `json:"valid_after"`
 	IsUserManaged bool   `json:"is_user_managed"`
-	AgeDays      int    `json:"age_days"`
-	IsOldKey     bool   `json:"is_old_key"` // keys > 90 days
+	AgeDays       int    `json:"age_days"`
+	IsOldKey      bool   `json:"is_old_key"` // keys > 90 days
 }
 
 type GcpServiceAccountAuditResult struct {
@@ -77,6 +79,27 @@ func Run() {
 		projectID = "dummy-project-id"
 	}
 
+	if output.IsVerbose() {
+		output.LogVerbose(fmt.Sprintf("Auditing GCP Project ID: %s", projectID))
+		goTokenSource, err := google.DefaultTokenSource(ctx, "https://www.googleapis.com/auth/cloud-platform")
+		if err == nil {
+			token, tokenErr := goTokenSource.Token()
+			if tokenErr == nil && token.AccessToken != "" {
+				client := &http.Client{Timeout: 5 * time.Second}
+				resp, httpErr := client.Get("https://oauth2.googleapis.com/tokeninfo?access_token=" + token.AccessToken)
+				if httpErr == nil {
+					defer resp.Body.Close()
+					var tokenInfo struct {
+						Email string `json:"email"`
+					}
+					if json.NewDecoder(resp.Body).Decode(&tokenInfo) == nil && tokenInfo.Email != "" {
+						output.LogVerbose(fmt.Sprintf("Current GCP Identity: %s", tokenInfo.Email))
+					}
+				}
+			}
+		}
+	}
+
 	parent := fmt.Sprintf("projects/%s", projectID)
 
 	// 1. Audit Service Accounts and their Keys (with PageToken Loop)
@@ -105,6 +128,9 @@ func Run() {
 
 	for index, sa := range accounts {
 		output.LogInfo(fmt.Sprintf("Auditing Service Account: %s", sa.Email))
+		if output.IsVerbose() {
+			output.LogVerbose(fmt.Sprintf("Analisando Service Account '%s'", sa.Email))
+		}
 
 		result := GcpServiceAccountAuditResult{
 			Name:                sa.Name,
@@ -153,6 +179,15 @@ func Run() {
 					AgeDays:       ageDays,
 					IsOldKey:      isOldKey,
 				})
+
+				if output.IsVerbose() {
+					keyID := key.Name
+					parts := strings.Split(key.Name, "/")
+					if len(parts) > 0 {
+						keyID = parts[len(parts)-1]
+					}
+					output.LogVerbose(fmt.Sprintf("Encontrada chave %s (ID: %s). Criada em: %s", key.KeyType, keyID, key.ValidAfterTime))
+				}
 			}
 		} else {
 			result.NonAuditableDetails = append(result.NonAuditableDetails, fmt.Sprintf("failed to list keys: %v", err))
@@ -192,14 +227,14 @@ func Run() {
 
 	// Escalation APIs mapping
 	escalationPermissions := map[string]string{
-		"iam.serviceaccounts.actas":          "Impersonate Service Account (Allows user to act as the service account)",
-		"iam.serviceaccounts.getaccesstoken": "Get Service Account Access Token (Allows generating temporary OAuth2 tokens)",
-		"iam.serviceaccounts.signblob":       "Sign Blob (Allows signing payloads as the service account)",
-		"iam.serviceaccounts.signjwt":        "Sign JWT (Allows signing JWTs as the service account)",
-		"iam.serviceaccounts.setiampolicy":   "Set Service Account IAM Policy (Allows granting oneself permissions on the service account)",
+		"iam.serviceaccounts.actas":             "Impersonate Service Account (Allows user to act as the service account)",
+		"iam.serviceaccounts.getaccesstoken":    "Get Service Account Access Token (Allows generating temporary OAuth2 tokens)",
+		"iam.serviceaccounts.signblob":          "Sign Blob (Allows signing payloads as the service account)",
+		"iam.serviceaccounts.signjwt":           "Sign JWT (Allows signing JWTs as the service account)",
+		"iam.serviceaccounts.setiampolicy":      "Set Service Account IAM Policy (Allows granting oneself permissions on the service account)",
 		"resourcemanager.projects.setiampolicy": "Set Project IAM Policy (Allows granting oneself permissions on the whole project)",
-		"compute.instances.create":           "Create VM Instances (Allows deploying new instances with privileged service accounts attached)",
-		"deploymentmanager.deployments.create": "Create Deployments (Allows deployment of resource templates with administrator scope)",
+		"compute.instances.create":              "Create VM Instances (Allows deploying new instances with privileged service accounts attached)",
+		"deploymentmanager.deployments.create":  "Create Deployments (Allows deployment of resource templates with administrator scope)",
 	}
 
 	for index, role := range customRoles {

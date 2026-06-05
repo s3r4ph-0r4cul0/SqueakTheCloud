@@ -16,7 +16,13 @@ import (
 
 func main() {
 	provider := flag.String("provider", "", "cloud provider: aws, azure, gcp")
+	verbose := flag.Bool("v", false, "enable verbose logging")
+	verboseLong := flag.Bool("verbose", false, "enable verbose logging")
 	flag.Parse()
+
+	if *verbose || *verboseLong {
+		output.SetVerbose(true)
+	}
 
 	normalizedProvider := strings.ToLower(strings.TrimSpace(*provider))
 	if normalizedProvider == "" {
@@ -95,4 +101,3 @@ func consolidateResults(provider string) error {
 
 	return nil
 }
-
