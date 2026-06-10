@@ -1,0 +1,12 @@
+# -- Main Menu --
+# The main menu is displayed in the header at the top of the page.
+
+[[main]]
+  name = "Documentation"
+  pageRef = "docs"
+  weight = 10
+
+[[main]]
+  name = "GitHub"
+  url = "https://github.com/s3r4ph-0r4cul0/SqueakTheCloud"
+  weight = 20
